@@ -14,7 +14,7 @@ onMount(() => {
   c.height = window.innerHeight;
   c.width = window.innerWidth;
   //characters - taken from the unicode charset
-  let charset: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123456789@#$%^&*()*&^%+-/~{[|`]}";
+  let charset: string = "ocnOCN";
   //converting the string into an array of single characters
   matrix = charset.split("");
 
@@ -73,7 +73,7 @@ onMount(() => {
 </script>
 <svelte:head>
 	<title>Home</title>
-	<link href="https://fonts.googleapis.com/css2?family=Turret+Road:wght@800&display=swap" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css2?family=Merriweather:ital,wght@0,300;0,400;0,700;0,900;1,300;1,400;1,700;1,900&family=Roboto+Slab:wght@100..900&display=swap" rel="stylesheet">
 </svelte:head>
 <canvas id="c"></canvas>
 <Navbar />
@@ -119,7 +119,7 @@ section {
 }
 
 .welcome text {
-  font-family: 'Turret Road', sans-serif;
+  font-family: "Merriweather", serif;
 	display:block;
 	text-align:center;
 	text-transform: uppercase;
