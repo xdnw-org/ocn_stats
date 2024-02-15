@@ -6,7 +6,7 @@ import Navbar from '../../components/Navbar.svelte'
 import Sidebar from '../../components/Sidebar.svelte'
 import Footer from '../../components/Footer.svelte'
 import { onMount } from 'svelte';
-import { addFormatters, decompressBson, formatDate, modalWithCloseButton, setupContainer } from '$lib';
+import { addFormatters, decompressBson, formatDate, modalWithCloseButton, setupContainer, type Conflict } from '$lib';
 
 // Set after page load
 let conflictName = "";
@@ -40,42 +40,7 @@ function trimHeader(header: string) {
  * @param sortBy The column to sort by
  * @param sortDir The direction to sort by (asc, desc)
  */
-function loadLayout(_rawData: {
-    // name of conflict
-    name: string,
-    // wiki url stub (or null)
-    wiki: string,
-    // start date of conflict
-    start: number,
-    // end date of conflict (or -1 if ongoing)
-    end: number,
-    // casus belli (or null)
-    cb: string,
-    // conflict status (or null)
-    status: string,
-    // post name -> [post id, post url text, timestamp]
-    posts: {[key: string]: [number, string, number]},
-    coalitions: {
-        name: string, // Name of the coalition
-        alliance_ids: number[], // Alliance ids in the coalition
-        alliance_names: string[], // Alliance names in the coalition (same order as ids)
-        nation_ids: number[], // The nation id of each nation
-        nation_aa: number[], // The alliance id of each nation (same order as nation_ids)
-        nation_names: string[], // The nation name of each nation (same order as nation_ids)
-         // Two 2d Arrays of count data (i.e. # wars, # attacks)
-         // First array is self-counts, 2nd is enemy counts
-         // The indexes are coalition index + alliance index + nation index (flat)
-        // i.e. self counts for a nation at nation_ids[i] -> counts[0][j] - where j = i + alliance_ids.length + coalition_ids.length
-        counts: [number[], number[]],
-        // Two 2d Arrays of damage data (i.e. infra damage, money lost, units killed etc.)
-        // First array is self-damage, 2nd is enemy damage
-        // The indexes are coalition index + alliance index + nation index (flat)
-        // i.e. self damage for a nation at nation_ids[i] -> damage[0][j] - where j = i + alliance_ids.length + coalition_ids.length
-        damage: [number[], number[]] 
-    }[], // The array of coalitions (typically 2)
-    counts_header: string[], // The column names for the counts data
-    damage_header: string[], // The column names for the damage data
-}, type: Layout, layout: string[], sortBy: string, sortDir: string) {
+function loadLayout(_rawData: Conflict, type: Layout, layout: string[], sortBy: string, sortDir: string) {
     conflictName = _rawData.name;
     let coalitions = _rawData.coalitions;
     let counts_header = _rawData.counts_header;
@@ -96,11 +61,11 @@ function loadLayout(_rawData: {
     switch (type) {
         case Layout.COALITION:
         row_format = (row: HTMLElement, data: {[key: string]: any}, index: number) => {
-                let name = data['name'][0];
-                if (coalitions[0].name === name) {
-                    row.classList.add('bg-light');
-                } else if (coalitions[1].name === name) {
-                    // row.classList.add('bg-secondary');
+                let name = data['name'];
+                if (name == 0) {
+                    row.classList.add('bg-danger-subtle');
+                } else if (name == 1) {
+                    row.classList.add('bg-info-subtle');
                 }
             }
             break;
@@ -108,9 +73,9 @@ function loadLayout(_rawData: {
             row_format = (row: HTMLElement, data: {[key: string]: any}, index: number) => {
                 let id = data['name'][1];
                 if (col1.has(id)) {
-                    row.classList.add('bg-light');
+                    row.classList.add('bg-danger-subtle');
                 } else if (col2.has(id)) {
-                    // row.classList.add('bg-secondary');
+                    row.classList.add('bg-info-subtle');
                 }
             }
             break;
@@ -118,9 +83,9 @@ function loadLayout(_rawData: {
             row_format = (row: HTMLElement, data: {[key: string]: any}, index: number) => {
                 let id = data['name'][2];
                 if (col1.has(id)) {
-                    row.classList.add('bg-light');
+                    row.classList.add('bg-danger-subtle');
                 } else if (col2.has(id)) {
-                    // row.classList.add('bg-secondary');
+                    row.classList.add('bg-info-subtle');
                 }
             }
             break;
@@ -500,59 +465,59 @@ function loadPosts(posts: {[key: string]: [number, string, number]}) {
             <hr class="mt-1">
         {/if}
     </h1>
-        <ul class="nav nav-tabs nav-fill m-0 p-0">
-            <li class="nav-item me-1">
-                <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold {_layoutData.layout == Layout.COALITION ? "bg-light" : ""}" id="profile-pill" data-bs-layout={Layout.COALITION} on:click={handleClick}>
-                    <i class="bi bi-cookie"></i>&nbsp;Coalition
-                </button>
-            </li>
-            <li class="nav-item me-1">
-                <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold {_layoutData.layout == Layout.ALLIANCE ? "bg-light" : ""}" id="billing-pill" data-bs-layout={Layout.ALLIANCE} on:click={handleClick}>
-                    <i class="bi bi-diagram-3-fill"></i>&nbsp;Alliance
-                </button>
-            </li>
-            <li class="nav-item me-1">
-                <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold {_layoutData.layout == Layout.NATION ? "bg-light" : ""}" id="billing-pill" data-bs-layout={Layout.NATION} on:click={handleClick}>
-                    <i class="bi bi-person-vcard-fill"></i>&nbsp;Nation
-                </button>
-            </li>
-            <li class="nav-item me-1">
-                <a class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold"  data-bs-layout={Layout.NATION} href="tiering/?id={conflictId}">
-                    <i class="bi bi-bar-chart-line-fill"></i>&nbsp;Tiering
-                </a>
-            </li>
-            <li class="nav-item me-1">
-                <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 disabled fw-bold" on:click={() => alert("Coming soon")}>
-                    <i class="bi bi-bar-chart-steps"></i>&nbsp;TODO: Rank/Time
-                </button>
-            </li>
-            <li class="nav-item me-1">
-                <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 disabled fw-bold" on:click={() => alert("Coming soon")}>
-                    <i class="bi bi-graph-up"></i>&nbsp;TODO: Graphs
-                </button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 disabled fw-bold" data-bs-layout={Layout.NATION} on:click={() => alert("Coming soon")}>
-                    <i class="bi bi-share-fill"></i>&nbsp;TODO: War Web
-                </button>
-            </li>
-        </ul>
-        <ul class="nav fw-bold nav-pills nav-fill m-0 p-0 bg-light border-bottom border-1">
-        <li class="p-1">
-            Layout Picker:
+    <ul class="nav nav-tabs nav-fill m-0 p-0">
+        <li class="nav-item me-1">
+            <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold {_layoutData.layout == Layout.COALITION ? "bg-light" : ""}" id="profile-pill" data-bs-layout={Layout.COALITION} on:click={handleClick}>
+                <i class="bi bi-cookie"></i>&nbsp;Coalition
+            </button>
         </li>
-        {#each Object.keys(layouts) as key}
-            <li>
-            <button class="btn btn-sm m-1 btn-secondary btn-outline-info opacity-75 fw-bold {_layoutData.columns === layouts[key].columns ? "active" : ""}" on:click={() => {
-                // Set the layout variable and recreate the table
-                _layoutData.columns = layouts[key].columns;
-                _layoutData.sort = layouts[key].sort;
-                setQueryParam('sort', _layoutData.sort);
-                loadCurrentLayout();
-            }}>{key}</button>
-            </li>
-        {/each}
-        </ul>
+        <li class="nav-item me-1">
+            <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold {_layoutData.layout == Layout.ALLIANCE ? "bg-light" : ""}" id="billing-pill" data-bs-layout={Layout.ALLIANCE} on:click={handleClick}>
+                <i class="bi bi-diagram-3-fill"></i>&nbsp;Alliance
+            </button>
+        </li>
+        <li class="nav-item me-1">
+            <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold {_layoutData.layout == Layout.NATION ? "bg-light" : ""}" id="billing-pill" data-bs-layout={Layout.NATION} on:click={handleClick}>
+                <i class="bi bi-person-vcard-fill"></i>&nbsp;Nation
+            </button>
+        </li>
+        <li class="nav-item me-1">
+            <a class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold" href="tiering/?id={conflictId}">
+                <i class="bi bi-bar-chart-line-fill"></i>&nbsp;Tiering
+            </a>
+        </li>
+        <li class="nav-item me-1">
+            <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 disabled fw-bold" on:click={() => alert("Coming soon")}>
+                <i class="bi bi-bar-chart-steps"></i>&nbsp;TODO: Rank/Time
+            </button>
+        </li>
+        <li class="nav-item me-1">
+            <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 disabled fw-bold" on:click={() => alert("Coming soon")}>
+                <i class="bi bi-graph-up"></i>&nbsp;TODO: Graphs
+            </button>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold" href="chord/?id={conflictId}">
+                <i class="bi bi-share-fill"></i>&nbsp;War Web
+            </a>
+        </li>
+    </ul>
+    <ul class="nav fw-bold nav-pills nav-fill m-0 p-0 bg-light border-bottom border-1">
+    <li class="p-1">
+        Layout Picker:
+    </li>
+    {#each Object.keys(layouts) as key}
+        <li>
+        <button class="btn btn-sm m-1 btn-secondary btn-outline-info opacity-75 fw-bold {_layoutData.columns === layouts[key].columns ? "active" : ""}" on:click={() => {
+            // Set the layout variable and recreate the table
+            _layoutData.columns = layouts[key].columns;
+            _layoutData.sort = layouts[key].sort;
+            setQueryParam('sort', _layoutData.sort);
+            loadCurrentLayout();
+        }}>{key}</button>
+        </li>
+    {/each}
+    </ul>
     <div class="p-1" id="conflict-table-1"></div>
     <!-- If coalition layout, then display the CB and Status -->
     {#if _layoutData.layout == Layout.COALITION}
