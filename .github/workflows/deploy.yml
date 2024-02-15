@@ -28,7 +28,7 @@ jobs:
 
       - name: build
         env:
-          BASE_PATH: '/lc_stats_svelte'
+          BASE_PATH: '/ocn_stats'
         run: |
           npm run build
           touch build/.nojekyll
