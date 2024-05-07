@@ -6,28 +6,61 @@ import Navbar from '../../components/Navbar.svelte'
 import Sidebar from '../../components/Sidebar.svelte'
 import Footer from '../../components/Footer.svelte'
 import { onMount } from 'svelte';
-import { addFormatters, decompressBson, formatDate, modalWithCloseButton, setupContainer, type Conflict } from '$lib';
+import { addFormatters, decompressBson, formatDate, modalWithCloseButton, setupContainer, type Conflict, setQueryParam, trimHeader, type TableData, modalStrWithCloseButton, downloadCells, downloadTableData, type ExportType, ExportTypes } from '$lib';
+import { config } from '../+layout';
+// Layout tabs
+enum Layout {
+    COALITION,
+    ALLIANCE,
+    NATION,
+}
 
 // Set after page load
 let conflictName = "";
 let conflictId = -1;
 
-// Rename function so the table columns are more compact
-function trimHeader(header: string) {
-    if (header.includes("_value")) {
-        header = "~$" + header.replace("_value", "");
+// see loadLayout for the type
+let _rawData: any = null;
+// The columns for the `attacks` layout button
+let breakdownCols = ["GROUND_TANKS_MUNITIONS_USED_UNNECESSARY","DOUBLE_FORTIFY","GROUND_NO_TANKS_MUNITIONS_USED_UNNECESSARY","GROUND_NO_TANKS_MUNITIONS_USED_UNNECESSARY_INACTIVE","GROUND_TANKS_NO_LOOT_NO_ENEMY_AIR_INACTIVE","GROUND_TANKS_NO_LOOT_NO_ENEMY_AIR","AIRSTRIKE_SOLDIERS_NONE","AIRSTRIKE_SOLDIERS_SHOULD_USE_GROUND","AIRSTRIKE_TANKS_NONE","AIRSTRIKE_SHIP_NONE","AIRSTRIKE_INACTIVE_NO_GROUND","AIRSTRIKE_INACTIVE_NO_SHIP","AIRSTRIKE_FAILED_NOT_DOGFIGHT","AIRSTRIKE_AIRCRAFT_NONE","AIRSTRIKE_AIRCRAFT_NONE_INACTIVE","AIRSTRIKE_AIRCRAFT_LOW","AIRSTRIKE_INFRA","AIRSTRIKE_MONEY","NAVAL_MAX_VS_NONE"].map(col => `off:${col.toLowerCase().replaceAll("_", " ")} attacks`);
+// The layouts buttons for the conflict table
+let layouts:{[key: string]: {sort: string, columns: string[]}} = {
+    Summary: {
+        sort: "off:wars", 
+        columns: ["name","net:damage","off:wars","def:wars","dealt:damage","loss:damage"]
+    },
+    Dealt: {
+        sort: "dealt:damage", 
+        columns:["name", "dealt:infra", "dealt:~$soldier", "dealt:~$tank", "dealt:~$aircraft", "dealt:~$ship", "dealt:~$unit", "dealt:~$consume", "dealt:~$loot", "dealt:damage"]
+    },
+    Received: {
+        sort: "loss:damage", 
+        columns:["name", "loss:infra", "loss:~$soldier", "loss:~$tank", "loss:~$aircraft", "loss:~$ship", "loss:~$unit", "loss:~$consume", "loss:~$loot", "loss:damage"]
+    },
+    Units: {
+        sort: "dealt:~$unit",
+        columns: ["name", "dealt:soldier", "dealt:tank", "dealt:aircraft", "dealt:ship", "dealt:~$unit", "loss:soldier", "loss:tank", "loss:aircraft", "loss:ship", "loss:~$unit"]
+    },
+    Consumption: {
+        sort: "name",
+        columns: ["name", "loss:~$building", "loss:gasoline", "loss:munitions", "loss:steel", "loss:aluminum", "loss:consume gas", "loss:consume mun"]
+    },
+    Attacks: {
+        sort: "off:attacks",
+        columns: ["name", "off:attacks", ...breakdownCols]
     }
-    if (header.includes("_loss")) {
-        header = header.replace("_loss", "");
-    }
-    if (header.includes("loss_")) {
-        header = header.replace("loss_", "");
-    }
-    if (header === "~$loss") {
-        header = "damage";
-    }
-    return header.replaceAll("_", " ");
 }
+
+// Variable for the current layout
+// Set by the layout buttons as well as on page load (loadLayoutFromQuery)
+let _layoutData = {
+    layout: Layout.COALITION,
+    columns: layouts.Summary.columns,
+    sort: layouts.Summary.sort,
+    order: "desc"
+};
+
+let _currentRowData: TableData;
 
 /**
  * Big function for loading the conflict table for a provided layout
@@ -43,8 +76,8 @@ function trimHeader(header: string) {
 function loadLayout(_rawData: Conflict, type: Layout, layout: string[], sortBy: string, sortDir: string) {
     conflictName = _rawData.name;
     let coalitions = _rawData.coalitions;
-    let counts_header = _rawData.counts_header;
     let damage_header = _rawData.damage_header;
+    let header_types = _rawData.header_type;
 
     let rows: any[][] = [];
     let columns: string[] = [];
@@ -95,21 +128,20 @@ function loadLayout(_rawData: Conflict, type: Layout, layout: string[], sortBy: 
     // Split the header names into columns (e.g. net damage can be calculated from dealt and received)
     { // columns
         columns.push("name");
-        for (let i = 0; i < counts_header.length; i++) {
-            let header = trimHeader(counts_header[i]);
-            columns.push("off:" + header);
-            columns.push("def:" + header);
-            columns.push("both:" + header);
-        }
         for (let i = 0; i < damage_header.length; i++) {
             let header = trimHeader(damage_header[i]);
-            columns.push("loss:" + header);
-            columns.push("dealt:" + header.replace("_loss", "").replace("loss_", ""));
-            columns.push("net:" + header.replace("_loss", "").replace("loss_", ""));
+            let type = header_types[i];
+            if (type == 0) {
+                columns.push("loss:" + header);
+                columns.push("dealt:" + header.replace("_loss", "").replace("loss_", ""));
+                columns.push("net:" + header.replace("_loss", "").replace("loss_", ""));
+            } else if (type == 1) {
+                columns.push("off:" + header);
+                columns.push("def:" + header);
+                columns.push("both:" + header);
+            }
         }
-
         searchable.push(0);
-        cell_format["coalitionNames"] = [0];
     }
     let sort: [number, string] = [columns.indexOf(sortBy), sortDir];
     // Set cell formatting and visible columns
@@ -129,24 +161,22 @@ function loadLayout(_rawData: Conflict, type: Layout, layout: string[], sortBy: 
     }
 
     // Helper function for adding the data for the columns into the rows
-    let addStats2Row = (row: any[], offStats: any, defStats: any, damageTaken: any, damageDealt: any) => {
-        for (let i = 0; i < offStats.length; i++) {
-            let offStat = offStats[i];
-            let defStat = defStats[i];
-            let totalStat = offStat + defStat;
-            // The three count stats for each column
-            row.push(offStat);
-            row.push(defStat);
-            row.push(totalStat);
-        }
+    let addStats2Row = (row: any[], damageTaken: any, damageDealt: any) => {
         for (let i = 0; i < damageTaken.length; i++) {
             let damageTakenStat = damageTaken[i];
             let damageDealtStat = damageDealt[i];
-            let damageNetStat = damageDealtStat - damageTakenStat;
+
+            let type = header_types[i];
+            let total;
+            if (type == 0) {
+                total = damageDealtStat - damageTakenStat;
+            } else {
+                total = damageDealtStat + damageTakenStat;
+            }
             // the three stats for each damage column
             row.push(damageTakenStat);
             row.push(damageDealtStat);
-            row.push(damageNetStat);
+            row.push(total);
         }
     };
 
@@ -158,7 +188,6 @@ function loadLayout(_rawData: Conflict, type: Layout, layout: string[], sortBy: 
         let nation_ids = colEntry.nation_ids;
         let nation_names = colEntry.nation_names;
         let nation_aas = colEntry.nation_aa;
-        let stats = colEntry.counts;
         let damage = colEntry.damage;
         // Handle the different layout types
         switch (type) {
@@ -166,7 +195,7 @@ function loadLayout(_rawData: Conflict, type: Layout, layout: string[], sortBy: 
                 // Use formatCol (coalition) for the name (index = 0)
                 cell_format["formatCol"] = [0];
                 let row = [index];
-                addStats2Row(row, stats[0], stats[1], damage[0], damage[1]);
+                addStats2Row(row, damage[0], damage[1]);
                 rows.push(row);
                 break;
             case Layout.ALLIANCE: {
@@ -178,7 +207,7 @@ function loadLayout(_rawData: Conflict, type: Layout, layout: string[], sortBy: 
                     let alliance_id = alliance_ids[i];
                     let alliance_name = alliance_names[i];
                     row.push([alliance_name,alliance_id]);
-                    addStats2Row(row, stats[i*2+o], stats[i*2+o+1], damage[i*2+o], damage[i*2+o+1]);
+                    addStats2Row(row, damage[i*2+o], damage[i*2+o+1]);
                     rows.push(row);
                 }
                 break;
@@ -193,7 +222,7 @@ function loadLayout(_rawData: Conflict, type: Layout, layout: string[], sortBy: 
                     let nation_name = nation_names[i];
                     let nation_aa = nation_aas[i];
                     row.push([nation_name,nation_id,nation_aa]);
-                    addStats2Row(row, stats[i*2+o], stats[i*2+o+1], damage[i*2+o], damage[i*2+o+1]);
+                    addStats2Row(row, damage[i*2+o], damage[i*2+o+1]);
                     rows.push(row);
                 }
                 break;
@@ -206,7 +235,7 @@ function loadLayout(_rawData: Conflict, type: Layout, layout: string[], sortBy: 
         addRow(colEntry, i);
     }
     // Setup the table
-    let data = {
+    _currentRowData = {
         columns: columns,
         data: rows,
         visible: visible,
@@ -216,56 +245,8 @@ function loadLayout(_rawData: Conflict, type: Layout, layout: string[], sortBy: 
         sort: sort
     }
     let container = document.getElementById("conflict-table-1");
-    setupContainer(container as HTMLElement, data);
+    setupContainer(container as HTMLElement, _currentRowData);
 }
-
-// see loadLayout for the type
-let _rawData: any = null;
-// The columns for the `attacks` layout button
-let breakdownCols = ["GROUND_TANKS_MUNITIONS_USED_UNNECESSARY","DOUBLE_FORTIFY","GROUND_NO_TANKS_MUNITIONS_USED_UNNECESSARY","GROUND_NO_TANKS_MUNITIONS_USED_UNNECESSARY_INACTIVE","GROUND_TANKS_NO_LOOT_NO_ENEMY_AIR_INACTIVE","GROUND_TANKS_NO_LOOT_NO_ENEMY_AIR","AIRSTRIKE_SOLDIERS_NONE","AIRSTRIKE_SOLDIERS_SHOULD_USE_GROUND","AIRSTRIKE_TANKS_NONE","AIRSTRIKE_SHIP_NONE","AIRSTRIKE_INACTIVE_NO_GROUND","AIRSTRIKE_INACTIVE_NO_SHIP","AIRSTRIKE_FAILED_NOT_DOGFIGHT","AIRSTRIKE_AIRCRAFT_NONE","AIRSTRIKE_AIRCRAFT_NONE_INACTIVE","AIRSTRIKE_AIRCRAFT_LOW","AIRSTRIKE_INFRA","AIRSTRIKE_MONEY","NAVAL_MAX_VS_NONE"].map(col => `off:${col.toLowerCase().replaceAll("_", " ")} attacks`);
-// The layouts buttons for the conflict table
-let layouts:{[key: string]: {sort: string, columns: string[]}} = {
-    Summary: {
-        sort: "off:wars", 
-        columns: ["name","net:damage","off:wars","def:wars","dealt:damage","loss:damage"]
-    },
-    Dealt: {
-        sort: "dealt:damage", 
-        columns:["name", "dealt:infra", "dealt:~$soldier", "dealt:~$tank", "dealt:~$aircraft", "dealt:~$ship", "dealt:~$unit", "dealt:~$consume", "dealt:~$loot", "dealt:damage"]
-    },
-    Received: {
-        sort: "loss:damage", 
-        columns:["name", "loss:infra", "loss:~$soldier", "loss:~$tank", "loss:~$aircraft", "loss:~$ship", "loss:~$unit", "loss:~$consume", "loss:~$loot", "loss:damage"]
-    },
-    Units: {
-        sort: "dealt:~$unit",
-        columns: ["name", "dealt:soldier", "dealt:tank", "dealt:aircraft", "dealt:ship", "dealt:~$unit", "loss:soldier", "loss:tank", "loss:aircraft", "loss:ship", "loss:~$unit"]
-    },
-    Consumption: {
-        sort: "name",
-        columns: ["name", "loss:~$building", "loss:gasoline", "loss:munitions", "loss:steel", "loss:aluminum", "loss:consume gas", "loss:consume mun"]
-    },
-    Attacks: {
-        sort: "off:attacks",
-        columns: ["name", "off:attacks", ...breakdownCols]
-    }
-}
-
-// Layout tabs
-enum Layout {
-    COALITION,
-    ALLIANCE,
-    NATION,
-}
-
-// Variable for the current layout
-// Set by the layout buttons as well as on page load (loadLayoutFromQuery)
-let _layoutData = {
-    layout: Layout.COALITION,
-    columns: layouts.Summary.columns,
-    sort: layouts.Summary.sort,
-    order: "desc"
-};
 
 // Set the current layout (called on page load)
 function loadLayoutFromQuery(query: URLSearchParams) {
@@ -287,6 +268,11 @@ function loadLayoutFromQuery(query: URLSearchParams) {
     if (order) {
         _layoutData.order = order;
     }
+    let columns = query.get('columns');
+    if (columns) {
+        // split by .
+        _layoutData.columns = columns.split(".");
+    }
 }
 
 // Create (or recreate) the table based on the current layout (_layoutData)
@@ -299,7 +285,7 @@ function loadCurrentLayout() {
 // Load the current layout (which will create the table)
 // If there are posts, load the posts into the timeline
 function setupConflictTables(conflictId: number) {
-    let url = `https://locutus.s3.ap-southeast-2.amazonaws.com/conflicts/${conflictId}.gzip`;
+    let url = `https://locutus.s3.ap-southeast-2.amazonaws.com/conflicts/${conflictId}.gzip?${config.version.conflict_data}`;
     decompressBson(url).then((data) => {
         _rawData = data;
         setColNames(_rawData.coalitions[0].alliance_ids, _rawData.coalitions[0].alliance_names);
@@ -374,6 +360,10 @@ onMount(() => {
         return button.outerHTML;
     }
 
+    (window as any).download = function download(useClipboard: boolean, type: string) {
+        downloadTableData(_currentRowData, useClipboard, ExportTypes[type as keyof typeof ExportTypes]);
+    }
+
     // Read the query string to get the conflict id as well as the table layout (if present)
     let queryParams = new URLSearchParams(window.location.search);
     loadLayoutFromQuery(queryParams)
@@ -385,17 +375,12 @@ onMount(() => {
     }
 });
 
-// Set the query param
-// Called during a layout button click (handleClick)
-function setQueryParam(param: string, value: any) {
-    let url = new URL(window.location.href);
-    url.searchParams.set(param, value);
-    window.history.pushState({}, '', url.toString());
-}
 // Handle the layout button clicks
 function handleClick(event: MouseEvent): void {
     _layoutData.layout = parseInt((event.target as HTMLButtonElement).getAttribute("data-bs-layout") as string);
     setQueryParam('layout', _layoutData.layout);
+    setQueryParam('sort', null);
+    setQueryParam('columns', null);
     loadCurrentLayout();
 }
 // Load the forum post metadata (from the s3 json) into the timeline (vis.js)
@@ -462,57 +447,41 @@ function loadPosts(posts: {[key: string]: [number, string, number]}) {
         <!-- Link the wiki (if it exists) -->
         {#if _rawData?.wiki}
             <a class="btn btn btn-info opacity-75 fw-bold" href="https://politicsandwar.fandom.com/wiki/{_rawData.wiki}">Wiki:{_rawData?.wiki}&nbsp;<i class="bi bi-box-arrow-up-right"></i></a>
-            <hr class="mt-1">
         {/if}
     </h1>
-    <ul class="nav nav-tabs nav-fill m-0 p-0">
-        <li class="nav-item me-1">
-            <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold {_layoutData.layout == Layout.COALITION ? "bg-light" : ""}" id="profile-pill" data-bs-layout={Layout.COALITION} on:click={handleClick}>
-                <i class="bi bi-cookie"></i>&nbsp;Coalition
-            </button>
-        </li>
-        <li class="nav-item me-1">
-            <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold {_layoutData.layout == Layout.ALLIANCE ? "bg-light" : ""}" id="billing-pill" data-bs-layout={Layout.ALLIANCE} on:click={handleClick}>
-                <i class="bi bi-diagram-3-fill"></i>&nbsp;Alliance
-            </button>
-        </li>
-        <li class="nav-item me-1">
-            <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold {_layoutData.layout == Layout.NATION ? "bg-light" : ""}" id="billing-pill" data-bs-layout={Layout.NATION} on:click={handleClick}>
-                <i class="bi bi-person-vcard-fill"></i>&nbsp;Nation
-            </button>
-        </li>
-        <li class="nav-item me-1">
-            <a class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold" href="tiering/?id={conflictId}">
-                <i class="bi bi-bar-chart-line-fill"></i>&nbsp;Tiering
-            </a>
-        </li>
-        <li class="nav-item me-1">
-            <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 disabled fw-bold" on:click={() => alert("Coming soon")}>
-                <i class="bi bi-bar-chart-steps"></i>&nbsp;TODO: Rank/Time
-            </button>
-        </li>
-        <li class="nav-item me-1">
-            <button class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 disabled fw-bold" on:click={() => alert("Coming soon")}>
-                <i class="bi bi-graph-up"></i>&nbsp;TODO: Graphs
-            </button>
-        </li>
-        <li class="nav-item">
-            <a class="nav-link ps-0 pe-0 btn btn-outline-light rounded-bottom-0 fw-bold" href="chord/?id={conflictId}">
-                <i class="bi bi-share-fill"></i>&nbsp;War Web
-            </a>
-        </li>
-    </ul>
-    <ul class="nav fw-bold nav-pills nav-fill m-0 p-0 bg-light border-bottom border-1">
-    <li class="p-1">
+    <hr class="mt-1">
+    <div class="row p-0 m-0">
+        <button class="col-2 ps-0 pe-0 btn btn-outline-secondary rounded-bottom-0 fw-bold {_layoutData.layout == Layout.COALITION ? "bg-light-subtle border border-bottom-0" : "border-0 border-bottom"}" id="profile-pill" data-bs-layout={Layout.COALITION} on:click={handleClick}>
+            ◑&nbsp;Coalition
+        </button>
+        <button class="col-2 btn ps-0 pe-0 btn btn-outline-secondary rounded-bottom-0 fw-bold {_layoutData.layout == Layout.ALLIANCE ? "bg-light-subtle border border-bottom-0" : "border-0 border-bottom"}" id="billing-pill" data-bs-layout={Layout.ALLIANCE} on:click={handleClick}>
+            𖣯&nbsp;Alliance
+        </button>
+        <button class="col-2 ps-0 pe-0 btn btn-outline-secondary rounded-bottom-0 fw-bold {_layoutData.layout == Layout.NATION ? "bg-light-subtle border border-bottom-0" : "border-0 border-bottom"}" id="billing-pill" data-bs-layout={Layout.NATION} on:click={handleClick}>
+            ♟&nbsp;Nation
+        </button>
+        <a class="col-2 ps-0 pe-0 btn btn-outline-secondary rounded-bottom-0 fw-bold border-0 border-bottom" href="tiering/?id={conflictId}">
+            📊&nbsp;Tier/Time
+        </a>
+        <a class="col-2 ps-0 pe-0 btn btn-outline-secondary rounded-bottom-0 fw-bold border-0 border-bottom" href="bubble/?id={conflictId}">
+            📈&nbsp;Bubble/Time
+        </a>
+        <a class="col-2 ps-0 pe-0 btn btn-outline-secondary rounded-bottom-0 fw-bold border-0 border-bottom" href="chord/?id={conflictId}">
+            🌐&nbsp;Web
+        </a>
+    </div>
+    <ul class="nav fw-bold nav-pills nav-fill m-0 p-0 bg-light-subtle border-bottom border-3 p-1">
+    <li>
         Layout Picker:
     </li>
     {#each Object.keys(layouts) as key}
         <li>
-        <button class="btn btn-sm m-1 btn-secondary btn-outline-info opacity-75 fw-bold {_layoutData.columns === layouts[key].columns ? "active" : ""}" on:click={() => {
+        <button class="btn btn-sm ms-1 btn-secondary btn-outline-info opacity-75 fw-bold {_layoutData.columns === layouts[key].columns ? "active" : ""}" on:click={() => {
             // Set the layout variable and recreate the table
             _layoutData.columns = layouts[key].columns;
             _layoutData.sort = layouts[key].sort;
             setQueryParam('sort', _layoutData.sort);
+            setQueryParam('columns', _layoutData.columns.join("."));
             loadCurrentLayout();
         }}>{key}</button>
         </li>

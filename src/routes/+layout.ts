@@ -8,4 +8,9 @@ export const config = {
     email: "TODO",
     repository_url: "https://github.com/xdnw-org/ocn_stats",
     wiki_url: "https://politicsandwar.fandom.com/wiki/Orbis_Crowned_News",
+    version: {
+        conflicts: 1.1,
+        conflict_data: 1.1,
+        graph_data: 1.1,
+    }
 }

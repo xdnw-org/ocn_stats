@@ -1,4 +1,5 @@
 <script lang=ts>
+	import { config } from './../+layout.ts';
 /**
  * This page is for viewing the table of all conflicts
 */
@@ -7,7 +8,9 @@ import Navbar from '../../components/Navbar.svelte'
 import Sidebar from '../../components/Sidebar.svelte'
 import Footer from '../../components/Footer.svelte'
 import { onMount } from 'svelte';
-import { decompressBson, modalWithCloseButton, setupContainer, addFormatters } from '$lib';
+import { decompressBson, modalWithCloseButton, setupContainer, addFormatters, downloadTableData, type TableData, type ExportType, ExportTypes } from '$lib';
+
+let _currentRowData: TableData;
 
 // onMount runs when this component (i.e. the page) is loaded
 // This registers the formatting functions, and then loads the data from s3 and creates the conflict list table
@@ -65,8 +68,12 @@ try {
         return result;
     }
 
+    (window as any).download = function download(useClipboard: boolean, type: string) {
+        downloadTableData(_currentRowData, useClipboard, ExportTypes[type as keyof typeof ExportTypes]);
+    }
+
     // Url of s3 bucket
-    let url = "https://locutus.s3.ap-southeast-2.amazonaws.com/conflicts/index.gzip";
+    let url = `https://locutus.s3.ap-southeast-2.amazonaws.com/conflicts/index.gzip?${config.version.conflicts}`;
     
     decompressBson(url).then((result) => {
         /*
@@ -126,7 +133,7 @@ try {
         cell_format["formatDate"] = [4,5];
 
         let container = document.getElementById('conflictTable');
-        let data = {
+        _currentRowData = {
             columns: columns,
             data: rows,
             visible: visible,
@@ -136,16 +143,18 @@ try {
                 // Highlight rows based on the end date (ongoing = warning, ended <5d ago = light, ended = no color)
                 let end = data.end;
                 if (end == -1) {
-                    row.classList.add('bg-warning');
+                    row.classList.add('bg-danger-subtle');
                 } else if (end < Date.now() - 432000000) { // 432000000 = 5 days in milliseconds
-                    row.classList.add('bg-light');
+                    row.classList.add('bg-light-subtle');
+                } else {
+                    row.classList.add('bg-warning-subtle');
                 }
             },
             sort: sort
         }
 
         // Setup the conflicts table
-        setupContainer(container as HTMLElement, data);
+        setupContainer(container as HTMLElement, _currentRowData);
 
     });
 } catch (error) {
